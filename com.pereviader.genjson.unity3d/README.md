@@ -1,6 +1,11 @@
+[![Test and publish](https://github.com/PereViader/GenJson/actions/workflows/TestAndPublish.yml/badge.svg)](https://github.com/PereViader/GenJson/actions/workflows/TestAndPublish.yml) ![GitHub Release](https://img.shields.io/github/v/release/PereViader/GenJson?include_prereleases) ![Unity version 2022.3.29](https://img.shields.io/badge/Unity-2022.3.29-57b9d3.svg?style=flat&logo=unity)
+
+
 # GenJson
 
 GenJson is a **zero-allocation**, high-performance C# Source Generator library that automatically creates `ToJson()` and `FromJson()` methods for your classes and structs.
+
+This project is compatible with both pure C# projects and Unity3D.
 
 ## Features
 
@@ -22,12 +27,34 @@ GenJson is a **zero-allocation**, high-performance C# Source Generator library t
 
 | Method                  | Mean [ns]  | Error [ns] | StdDev [ns] | Gen0   | Gen1   | Allocated [KB] |
 |------------------------ |-----------:|-----------:|------------:|-------:|-------:|---------------:|
-| GenJson_ToJson          |   907.1 ns |   17.86 ns |    23.85 ns | 0.0324 | 0.0000 |         1.6 KB |
-| MicrosoftJson_ToJson    | 1,201.5 ns |   23.90 ns |    24.55 ns | 0.0381 | 0.0000 |        1.92 KB |
-| NewtonsoftJson_ToJson   | 2,277.0 ns |   44.99 ns |    61.59 ns | 0.1183 | 0.0000 |        5.95 KB |
-| GenJson_FromJson        | 1,542.1 ns |   30.65 ns |    32.80 ns | 0.0477 | 0.0000 |        2.39 KB |
-| MicrosoftJson_FromJson  | 2,367.9 ns |   46.53 ns |    55.39 ns | 0.0610 | 0.0000 |           3 KB |
-| NewtonsoftJson_FromJson | 3,892.0 ns |   74.41 ns |    82.71 ns | 0.1678 | 0.0038 |        8.23 KB |
+| GenJson_ToJson          |   977.3 ns |   19.44 ns |    20.80 ns | 0.0343 | 0.0000 |        1.72 KB |
+| MicrosoftJson_ToJson    | 1,203.1 ns |   24.03 ns |    23.60 ns | 0.0381 | 0.0000 |        1.92 KB |
+| NewtonsoftJson_ToJson   | 2,221.5 ns |   42.04 ns |    41.29 ns | 0.1183 | 0.0000 |        5.95 KB |
+| GenJson_FromJson        | 1,212.7 ns |   23.63 ns |    28.13 ns | 0.0477 | 0.0000 |        2.39 KB |
+| MicrosoftJson_FromJson  | 2,342.1 ns |   46.59 ns |    51.78 ns | 0.0610 | 0.0000 |           3 KB |
+| NewtonsoftJson_FromJson | 3,889.3 ns |   76.55 ns |    94.01 ns | 0.1678 | 0.0038 |        8.23 KB |
+
+## Installation
+
+### NuGet
+
+> [!WARNING]
+> Not implemented yet
+
+### Unity Package Manager
+
+### From OpenUPM
+
+> [!WARNING]
+> OpenUPM still not implemented
+
+### From Tarball
+
+- Download the latest release from [releases](https://github.com/PereViader/GenJson/releases)
+- Package files are usually in the packages folder
+- Reference the package using the `Add Package from tar` button in the Unity Package Manager [(docs)](https://docs.unity3d.com/6000.3/Documentation/Manual/upm-ui-tarball.html)
+
+
 
 ## Usage
 
@@ -288,6 +315,32 @@ public partial class Cat : Animal
 **Serialization**: The generator will automatically include the discriminator property (`$type`: "dog") in the JSON output.
 
 **Deserialization**: `Animal.FromJson(...)` will inspect the `$type` property and deserialize into the correct derived type (`Dog` or `Cat`). If the type is unknown or missing (for abstract bases), it returns `null`.
+
+### 11. Collection Count Optimization
+
+GenJson optimizes collection deserialization (Lists, Arrays, Dictionaries) by pre-allocating the collection with the exact size. This avoids resizing overhead during population.
+
+**How it works:**
+- **Serialization**: The generator automatically emits a hidden property named after the collection with a `$` prefix (e.g., `"$MyList": 5`) immediately before the collection property.
+- **Deserialization**: The parser reads this count property first and initializes the collection with the correct capacity (e.g., `new List<int>(5)`).
+
+> [!NOTE]
+> GenJson can still parse standard JSON without the count property. If the property is missing, it will automatically fall back to counting the elements of the collection before doing the allocation.
+
+**Disabling Optimization:**
+To maintain strictly standard JSON or avoid extra metadata properties, apply the [GenJsonSkipCountOptimization] attribute to your class or struct.
+
+> [!TIP] 
+> If the receiving end doesn't use count metadata, disabling this optimization speeds up ToJson execution and reduces memory allocations.
+
+```csharp
+[GenJson]
+[GenJsonSkipCountOptimization] // Disables usage of $MyList property
+public partial class MyClass
+{
+    public List<int> MyList { get; set; }
+}
+```
 
 ## How It Works
 
