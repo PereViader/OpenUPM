@@ -1,0 +1,79 @@
+name: Publish
+on:
+  workflow_dispatch:
+    inputs:
+      ingest_url:
+        type: string
+        description: 'The URL of the package to download (tar.gz)'
+        required: true
+
+jobs:
+  PublishUnity3dPackage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish Package
+        run: |
+          # 1. Download and Extract to Temp
+          mkdir temp_extract
+          echo "Downloading package from ${{ inputs.ingest_url }}"
+          curl -L -o package.tar.gz "${{ inputs.ingest_url }}"
+          tar -xzf package.tar.gz -C temp_extract
+          rm package.tar.gz
+
+          # Flatten if necessary
+          (
+            shopt -s dotglob
+            files=("temp_extract"/*)
+            if [ ${#files[@]} -eq 1 ] && [ -d "${files[0]}" ]; then
+              echo "Flattening single directory ${files[0]}..."
+              mv "${files[0]}"/* "temp_extract/"
+              rmdir "${files[0]}"
+            fi
+          )
+
+          # 2. Read Name and Version
+          if [ -f "temp_extract/package.json" ]; then
+            PACKAGE_NAME=$(jq -r .name "temp_extract/package.json")
+            VERSION=$(jq -r .version "temp_extract/package.json")
+          else
+            echo "Error: package.json not found in extracted package"
+            exit 1
+          fi
+          
+          if [ -z "$PACKAGE_NAME" ] || [ "$PACKAGE_NAME" == "null" ]; then
+            echo "Error: Could not determine package name from package.json"
+            exit 1
+          fi
+
+          echo "Detected package: $PACKAGE_NAME @ $VERSION"
+
+          # 3. Prepare Destination
+          # Remove existing folder if it exists
+          if [ -d "$PACKAGE_NAME" ]; then
+            echo "Removing existing package folder: $PACKAGE_NAME"
+            rm -rf "$PACKAGE_NAME"
+          fi
+          
+          # Move temp to destination
+          mkdir -p "$PACKAGE_NAME"
+          # Move contents (including hidden files)
+          shopt -s dotglob
+          mv temp_extract/* "$PACKAGE_NAME/"
+          rmdir temp_extract
+
+          # 4. Commit and Tag
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          git add .
+          git commit -m "Update $PACKAGE_NAME to $VERSION"
+          
+          TAG_NAME="$PACKAGE_NAME/$VERSION"
+          echo "Creating tag: $TAG_NAME"
+          
+          git tag -a "$TAG_NAME" -m "Update $PACKAGE_NAME to $VERSION"
+          git push origin HEAD:${{ github.ref }} --tags
