@@ -78,4 +78,5 @@ jobs:
           echo "Creating tag: $TAG_NAME"
           
           git tag -a "$TAG_NAME" -m "Update $PACKAGE_NAME to $VERSION"
-          git push origin HEAD:${{ github.ref }} --tags
+          git push origin HEAD:${{ github.ref }}
+          git push origin "$TAG_NAME"
