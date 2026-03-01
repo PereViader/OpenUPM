@@ -1,6 +1,6 @@
 {
     "name": "com.pereviader.manualdi.async.unity3d",
-    "version": "3.0.0-preview.2",
+    "version": "3.0.0",
     "displayName": "ManualDi.Async",
     "description": "Fast C# dependency injection library that uses no reflexion",
     "unity": "2022.3",
