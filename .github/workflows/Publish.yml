@@ -1,4 +1,6 @@
 name: Publish
+concurrency:
+  group: publish
 on:
   workflow_dispatch:
     inputs:
