@@ -1,4 +1,4 @@
-[![Test and publish](https://github.com/PereViader/GenJson/actions/workflows/TestAndPublish.yml/badge.svg)](https://github.com/PereViader/GenJson/actions/workflows/TestAndPublish.yml) ![GitHub Release](https://img.shields.io/github/v/release/PereViader/GenJson?include_prereleases) ![Unity version 2022.3.29](https://img.shields.io/badge/Unity-2022.3.29-57b9d3.svg?style=flat&logo=unity)
+[![Test and publish](https://github.com/PereViader/GenJson/actions/workflows/TestAndPublish.yml/badge.svg)](https://github.com/PereViader/GenJson/actions/workflows/TestAndPublish.yml) ![Unity version 2022.3.29](https://img.shields.io/badge/Unity-2022.3.29-57b9d3.svg?style=flat&logo=unity) ![GitHub Release](https://img.shields.io/github/v/release/PereViader/GenJson?include_prereleases) [![NuGet](https://img.shields.io/nuget/v/GenJson?label=nuget)](https://www.nuget.org/packages/GenJson/)
 
 
 # GenJson
@@ -11,7 +11,7 @@ This project is compatible with both pure C# projects and Unity3D.
 
 - **Compile-Time Generation**: No reflection overhead at runtime.
 - **Zero* Allocation Serialization**: Uses `Span` based string creation to write directly into the result string's memory, avoiding `StringBuilder` and intermediate string allocations for primitives.
-- **Zero* Allocation Deserialization**: Uses `ReadOnlySpan<char>` based parsing logic to avoid intermediate string allocations.
+- **Zero* Allocation Deserialization**: Uses `ReadOnlySpan<char>` and `ReadOnlySpan<byte>` (UTF-8) based parsing logic to avoid intermediate string allocations.
 - **Easy Integration**: Simply mark your classes with the `[GenJson]` attribute.
 - **Rich Type Support**:
   - Primitives: `int`, `string`, `bool`, `double`, `float`, `decimal` etc
@@ -25,36 +25,37 @@ This project is compatible with both pure C# projects and Unity3D.
 
 ## [Benchmark](https://github.com/PereViader/GenJson/blob/main/src/GenJson.Benchmark/Program.cs)
 
-| Method                  | Mean [ns]  | Error [ns] | StdDev [ns] | Gen0   | Gen1   | Allocated [KB] |
-|------------------------ |-----------:|-----------:|------------:|-------:|-------:|---------------:|
-| GenJson_ToJson          |   977.3 ns |   19.44 ns |    20.80 ns | 0.0343 | 0.0000 |        1.72 KB |
-| MicrosoftJson_ToJson    | 1,203.1 ns |   24.03 ns |    23.60 ns | 0.0381 | 0.0000 |        1.92 KB |
-| NewtonsoftJson_ToJson   | 2,221.5 ns |   42.04 ns |    41.29 ns | 0.1183 | 0.0000 |        5.95 KB |
-| GenJson_FromJson        | 1,212.7 ns |   23.63 ns |    28.13 ns | 0.0477 | 0.0000 |        2.39 KB |
-| MicrosoftJson_FromJson  | 2,342.1 ns |   46.59 ns |    51.78 ns | 0.0610 | 0.0000 |           3 KB |
-| NewtonsoftJson_FromJson | 3,889.3 ns |   76.55 ns |    94.01 ns | 0.1678 | 0.0038 |        8.23 KB |
+| Method                     | Mean [ns]  | Error [ns] | StdDev [ns] | Gen0   | Allocated [KB] |
+|--------------------------- |-----------:|-----------:|------------:|-------:|---------------:|
+| GenJson_ToJson             | 1,029.8 ns |   20.30 ns |    35.01 ns | 0.0343 |        1.72 KB |
+| MicrosoftJson_ToJson       | 1,197.2 ns |   23.36 ns |    31.19 ns | 0.0381 |        1.92 KB |
+| NewtonsoftJson_ToJson      | 2,327.3 ns |   45.57 ns |    55.97 ns | 0.1183 |        5.95 KB |
+| GenJson_FromJson           | 1,127.0 ns |   21.92 ns |    25.25 ns | 0.0439 |        2.16 KB |
+| MicrosoftJson_FromJson     | 2,447.2 ns |   47.78 ns |    46.92 ns | 0.0610 |           3 KB |
+| NewtonsoftJson_FromJson    | 4,020.5 ns |   79.68 ns |    94.85 ns | 0.1678 |        8.23 KB |
+| GenJson_FromJsonUtf8       | 1,119.5 ns |   22.32 ns |    22.92 ns | 0.0439 |        2.16 KB |
+| MicrosoftJson_FromJsonUtf8 | 2,331.4 ns |   44.92 ns |    64.42 ns | 0.0610 |           3 KB |
 
 ## Installation
 
 ### NuGet
 
-> [!WARNING]
-> Not implemented yet
+Install from [Nuget](https://www.nuget.org/packages/GenJson/)
+```bash
+dotnet add package GenJson
+```
 
 ### Unity Package Manager
 
 ### From OpenUPM
 
-> [!WARNING]
-> OpenUPM still not implemented
+Install from [OpenUPM](https://openupm.com/packages/com.pereviader.genjson.unity3d/#modal-manualinstallation)
 
 ### From Tarball
 
 - Download the latest release from [releases](https://github.com/PereViader/GenJson/releases)
-- Package files are usually in the packages folder
+- Place the downloaded package file inside the `Packages` folder in your unity project
 - Reference the package using the `Add Package from tar` button in the Unity Package Manager [(docs)](https://docs.unity3d.com/6000.3/Documentation/Manual/upm-ui-tarball.html)
-
-
 
 ## Usage
 
@@ -222,14 +223,21 @@ var product = new Product
 
 // Zero-allocation serialization (allocates only the result string)
 string json = product.ToJson();
+
+// You can also serialize directly to a UTF-8 byte array
+byte[] utf8Json = product.ToJsonUtf8();
 ```
 
 ### 8. Deserialization
 
-The generator creates a static `FromJson` method on your class.
+The generator creates static `FromJson` and `FromJsonUtf8` methods on your class.
 
 ```csharp
 Product product = Product.FromJson(json);
+
+// You can also deserialize directly from a UTF-8 byte span or array
+byte[] utf8Json = ... // e.g. from a network stream
+Product productUtf8 = Product.FromJsonUtf8(utf8Json);
 ```
 
 > [!IMPORTANT]
