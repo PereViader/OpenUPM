@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,12 +44,19 @@ namespace ManualDi.Async
             bindingCount++;
             
             var apparentType = type.TypeHandle.Value;
-            if (!bindingsByType.TryGetValue(apparentType, out var innerbinding)) //TODO: Maybe this is more efficient if we do a TryAdd instead (common case)
+#if NETSTANDARD2_1 //TryAdd is not available on netstandard2.0
+            if (bindingsByType.TryAdd(apparentType, binding))
+            {
+                return;
+            }
+            var innerbinding = bindingsByType[apparentType];
+#elif NETSTANDARD2_0
+            if (!bindingsByType.TryGetValue(apparentType, out var innerbinding))
             {
                 bindingsByType.Add(apparentType, binding);
                 return;
             }
-
+#endif
             while (innerbinding.NextBinding is not null)
             {
                 innerbinding = innerbinding.NextBinding;
@@ -93,12 +100,6 @@ namespace ManualDi.Async
         public void QueueInitializeAsync(AsyncContainerDelegate asyncContainerDelegate)
         {
             initializeDelegates.Add(asyncContainerDelegate);
-        }
-        
-        [Obsolete("Use QueueInitialize instead")]
-        public void QueueInitialization(ContainerDelegate containerDelegate)
-        {
-            QueueInitialize(containerDelegate);
         }
         
         public void QueueStartup(ContainerDelegate containerDelegate)
