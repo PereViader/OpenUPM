@@ -42,11 +42,23 @@ namespace GenJson
                     escaped = true;
                     if (index >= json.Length) return false;
                     c = json[index++];
+                    if (!IsValidJsonEscape(c)) return false;
                     if (c == 'u')
                     {
                         if (index + 4 > json.Length) return false;
+                        if (!IsHexDigit(json[index]) ||
+                            !IsHexDigit(json[index + 1]) ||
+                            !IsHexDigit(json[index + 2]) ||
+                            !IsHexDigit(json[index + 3]))
+                        {
+                            return false;
+                        }
                         index += 4;
                     }
+                }
+                else if (c < ' ')
+                {
+                    return false;
                 }
             }
 
@@ -81,11 +93,23 @@ namespace GenJson
                     escaped = true;
                     if (index >= json.Length) return false;
                     c = json[index++];
+                    if (!IsValidJsonEscape(c)) return false;
                     if (c == 'u')
                     {
                         if (index + 4 > json.Length) return false;
+                        if (!IsHexDigit(json[index]) ||
+                            !IsHexDigit(json[index + 1]) ||
+                            !IsHexDigit(json[index + 2]) ||
+                            !IsHexDigit(json[index + 3]))
+                        {
+                            return false;
+                        }
                         index += 4;
                     }
+                }
+                else if (c < ' ')
+                {
+                    return false;
                 }
             }
 
@@ -93,6 +117,34 @@ namespace GenJson
         }
 
 
+
+        private static char ParseHexFour(ReadOnlySpan<char> span)
+        {
+            var val = 0;
+            for (var i = 0; i < 4; i++)
+            {
+                var h = span[i];
+                val <<= 4;
+                if (h >= '0' && h <= '9') val |= h - '0';
+                else if (h >= 'a' && h <= 'f') val |= h - 'a' + 10;
+                else if (h >= 'A' && h <= 'F') val |= h - 'A' + 10;
+            }
+            return (char)val;
+        }
+
+        private static char ParseHexFour(ReadOnlySpan<byte> span)
+        {
+            var val = 0;
+            for (var i = 0; i < 4; i++)
+            {
+                var h = span[i];
+                val <<= 4;
+                if (h >= '0' && h <= '9') val |= h - '0';
+                else if (h >= 'a' && h <= 'f') val |= h - 'a' + 10;
+                else if (h >= 'A' && h <= 'F') val |= h - 'A' + 10;
+            }
+            return (char)val;
+        }
 
         public static string UnescapeString(ReadOnlySpan<char> input)
         {
@@ -139,8 +191,7 @@ namespace GenJson
                         case 'u':
                             var hexSequence = input.Slice(readIdx, 4);
                             readIdx += 4;
-                            output[writeIdx++] = (char)int.Parse(hexSequence, NumberStyles.HexNumber,
-                                CultureInfo.InvariantCulture);
+                            output[writeIdx++] = ParseHexFour(hexSequence);
                             break;
                         default: output[writeIdx++] = c; break;
                     }
@@ -154,49 +205,71 @@ namespace GenJson
             return writeIdx;
         }
 
-
         public static string UnescapeStringUtf8(ReadOnlySpan<byte> input)
         {
-            var rented = ArrayPool<char>.Shared.Rent(input.Length);
+            var maxLen = input.Length;
+            if (maxLen <= 128)
+            {
+                Span<char> buffer = stackalloc char[maxLen];
+                var written = UnescapeUtf8Into(input, buffer);
+                return new string(buffer.Slice(0, written));
+            }
+
+            var rented = ArrayPool<char>.Shared.Rent(maxLen);
             try
             {
-                int written = 0;
-                int readIdx = 0;
-                while (readIdx < input.Length)
-                {
-                    var c = (char)input[readIdx++];
-                    if (c == '\\')
-                    {
-                        c = (char)input[readIdx++];
-                        switch (c)
-                        {
-                            case '"': rented[written++] = '"'; break;
-                            case '\\': rented[written++] = '\\'; break;
-                            case '/': rented[written++] = '/'; break;
-                            case 'b': rented[written++] = '\b'; break;
-                            case 'f': rented[written++] = '\f'; break;
-                            case 'n': rented[written++] = '\n'; break;
-                            case 'r': rented[written++] = '\r'; break;
-                            case 't': rented[written++] = '\t'; break;
-                            case 'u':
-                                Span<char> hexChars = stackalloc char[4];
-                                for (int i = 0; i < 4; i++) hexChars[i] = (char)input[readIdx++];
-                                rented[written++] = (char)int.Parse(hexChars, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-                                break;
-                            default: rented[written++] = c; break;
-                        }
-                    }
-                    else
-                    {
-                        rented[written++] = c;
-                    }
-                }
+                var written = UnescapeUtf8Into(input, rented);
                 return new string(rented, 0, written);
             }
             finally
             {
                 ArrayPool<char>.Shared.Return(rented);
             }
+        }
+
+        private static int UnescapeUtf8Into(ReadOnlySpan<byte> input, Span<char> output)
+        {
+            int written = 0;
+            int readIdx = 0;
+            while (readIdx < input.Length)
+            {
+                var chunkStart = readIdx;
+                while (readIdx < input.Length && input[readIdx] != (byte)'\\')
+                {
+                    readIdx++;
+                }
+
+                if (readIdx > chunkStart)
+                {
+                    written += Encoding.UTF8.GetChars(input.Slice(chunkStart, readIdx - chunkStart), output.Slice(written));
+                }
+
+                if (readIdx >= input.Length)
+                {
+                    break;
+                }
+
+                readIdx++;
+                var c = (char)input[readIdx++];
+                switch (c)
+                {
+                    case '"': output[written++] = '"'; break;
+                    case '\\': output[written++] = '\\'; break;
+                    case '/': output[written++] = '/'; break;
+                    case 'b': output[written++] = '\b'; break;
+                    case 'f': output[written++] = '\f'; break;
+                    case 'n': output[written++] = '\n'; break;
+                    case 'r': output[written++] = '\r'; break;
+                    case 't': output[written++] = '\t'; break;
+                    case 'u':
+                        var hexSequence = input.Slice(readIdx, 4);
+                        readIdx += 4;
+                        output[written++] = ParseHexFour(hexSequence);
+                        break;
+                    default: output[written++] = c; break;
+                }
+            }
+            return written;
         }
 
 
@@ -274,6 +347,19 @@ namespace GenJson
                         case 'r': unescaped = '\r'; break;
                         case 't': unescaped = '\t'; break;
                         case 'u':
+                            if (index + 4 > json.Length)
+                            {
+                                index = originalIndex;
+                                return false;
+                            }
+                            if (!IsHexDigit(json[index]) ||
+                                !IsHexDigit(json[index + 1]) ||
+                                !IsHexDigit(json[index + 2]) ||
+                                !IsHexDigit(json[index + 3]))
+                            {
+                                index = originalIndex;
+                                return false;
+                            }
                             var hexSequence = json.Slice(index, 4);
                             index += 4;
                             unescaped = (char)int.Parse(hexSequence, NumberStyles.HexNumber,
@@ -360,8 +446,10 @@ namespace GenJson
 
         public static bool TryParseChar(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out char? result)
         {
+            var originalIndex = index;
             if (!TryParseString(json, ref index, out var s) || s.Length != 1)
             {
+                index = originalIndex;
                 result = null;
                 return false;
             }
@@ -372,8 +460,10 @@ namespace GenJson
 
         public static bool TryParseChar(ReadOnlySpan<char> json, ref int index, out char result)
         {
+            var originalIndex = index;
             if (!TryParseString(json, ref index, out var s) || s.Length != 1)
             {
+                index = originalIndex;
                 result = default;
                 return false;
             }
@@ -600,17 +690,11 @@ namespace GenJson
 
         public static bool TryParseDouble(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out double? result)
         {
-            var start = index;
-            if (index < json.Length && json[index] == '-') index++;
-            while (index < json.Length && (char.IsDigit(json[index]) || json[index] == '.' || json[index] == 'e' || json[index] == 'E' || json[index] == '+' || json[index] == '-')) index++;
-            var slice = json.Slice(start, index - start);
-            if (double.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out var varRes))
+            if (TryParseDouble(json, ref index, out double val))
             {
-                result = varRes;
+                result = val;
                 return true;
             }
-
-            index = start;
             result = null;
             return false;
         }
@@ -620,25 +704,60 @@ namespace GenJson
             var start = index;
             if (index < json.Length && json[index] == '-') index++;
             while (index < json.Length && (char.IsDigit(json[index]) || json[index] == '.' || json[index] == 'e' || json[index] == 'E' || json[index] == '+' || json[index] == '-')) index++;
-            var slice = json.Slice(start, index - start);
-            if (double.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out result)) return true;
+            if (index > start)
+            {
+                var slice = json.Slice(start, index - start);
+                if (double.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out result)) return true;
+            }
             index = start;
+
+            if (index < json.Length && json[index] == '"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == '-') curr++;
+                bool isNamed = false;
+                if (curr < json.Length && (json[curr] == 'I' || json[curr] == 'N'))
+                {
+                    isNamed = true;
+                    while (curr < json.Length && ((json[curr] >= 'a' && json[curr] <= 'z') || (json[curr] >= 'A' && json[curr] <= 'Z'))) curr++;
+                }
+                else
+                {
+                    while (curr < json.Length && (char.IsDigit(json[curr]) || json[curr] == '.' || json[curr] == 'e' || json[curr] == 'E' || json[curr] == '+' || json[curr] == '-')) curr++;
+                }
+
+                if (curr < json.Length && json[curr] == '"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (isNamed)
+                    {
+                        if (sliceFallback.SequenceEqual("NaN".AsSpan())) { result = double.NaN; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual("Infinity".AsSpan()) || sliceFallback.SequenceEqual("+Infinity".AsSpan())) { result = double.PositiveInfinity; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual("-Infinity".AsSpan())) { result = double.NegativeInfinity; index = curr + 1; return true; }
+                    }
+                    else
+                    {
+                        if (double.TryParse(sliceFallback, NumberStyles.Float, CultureInfo.InvariantCulture, out result))
+                        {
+                            index = curr + 1;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            result = default;
             return false;
         }
 
         public static bool TryParseFloat(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out float? result)
         {
-            var start = index;
-            if (index < json.Length && json[index] == '-') index++;
-            while (index < json.Length && (char.IsDigit(json[index]) || json[index] == '.' || json[index] == 'e' || json[index] == 'E' || json[index] == '+' || json[index] == '-')) index++;
-            var slice = json.Slice(start, index - start);
-            if (float.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out var varRes))
+            if (TryParseFloat(json, ref index, out float val))
             {
-                result = varRes;
+                result = val;
                 return true;
             }
-
-            index = start;
             result = null;
             return false;
         }
@@ -648,25 +767,60 @@ namespace GenJson
             var start = index;
             if (index < json.Length && json[index] == '-') index++;
             while (index < json.Length && (char.IsDigit(json[index]) || json[index] == '.' || json[index] == 'e' || json[index] == 'E' || json[index] == '+' || json[index] == '-')) index++;
-            var slice = json.Slice(start, index - start);
-            if (float.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out result)) return true;
+            if (index > start)
+            {
+                var slice = json.Slice(start, index - start);
+                if (float.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out result)) return true;
+            }
             index = start;
+
+            if (index < json.Length && json[index] == '"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == '-') curr++;
+                bool isNamed = false;
+                if (curr < json.Length && (json[curr] == 'I' || json[curr] == 'N'))
+                {
+                    isNamed = true;
+                    while (curr < json.Length && ((json[curr] >= 'a' && json[curr] <= 'z') || (json[curr] >= 'A' && json[curr] <= 'Z'))) curr++;
+                }
+                else
+                {
+                    while (curr < json.Length && (char.IsDigit(json[curr]) || json[curr] == '.' || json[curr] == 'e' || json[curr] == 'E' || json[curr] == '+' || json[curr] == '-')) curr++;
+                }
+
+                if (curr < json.Length && json[curr] == '"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (isNamed)
+                    {
+                        if (sliceFallback.SequenceEqual("NaN".AsSpan())) { result = float.NaN; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual("Infinity".AsSpan()) || sliceFallback.SequenceEqual("+Infinity".AsSpan())) { result = float.PositiveInfinity; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual("-Infinity".AsSpan())) { result = float.NegativeInfinity; index = curr + 1; return true; }
+                    }
+                    else
+                    {
+                        if (float.TryParse(sliceFallback, NumberStyles.Float, CultureInfo.InvariantCulture, out result))
+                        {
+                            index = curr + 1;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            result = default;
             return false;
         }
 
         public static bool TryParseDecimal(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out decimal? result)
         {
-            var start = index;
-            if (index < json.Length && json[index] == '-') index++;
-            while (index < json.Length && (char.IsDigit(json[index]) || json[index] == '.' || json[index] == 'e' || json[index] == 'E' || json[index] == '+' || json[index] == '-')) index++;
-            var slice = json.Slice(start, index - start);
-            if (decimal.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out var varRes))
+            if (TryParseDecimal(json, ref index, out decimal val))
             {
-                result = varRes;
+                result = val;
                 return true;
             }
-
-            index = start;
             result = null;
             return false;
         }
@@ -676,9 +830,32 @@ namespace GenJson
             var start = index;
             if (index < json.Length && json[index] == '-') index++;
             while (index < json.Length && (char.IsDigit(json[index]) || json[index] == '.' || json[index] == 'e' || json[index] == 'E' || json[index] == '+' || json[index] == '-')) index++;
-            var slice = json.Slice(start, index - start);
-            if (decimal.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out result)) return true;
+            if (index > start)
+            {
+                var slice = json.Slice(start, index - start);
+                if (decimal.TryParse(slice, NumberStyles.Float, CultureInfo.InvariantCulture, out result)) return true;
+            }
             index = start;
+
+            if (index < json.Length && json[index] == '"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == '-') curr++;
+                while (curr < json.Length && (char.IsDigit(json[curr]) || json[curr] == '.' || json[curr] == 'e' || json[curr] == 'E' || json[curr] == '+' || json[curr] == '-')) curr++;
+
+                if (curr < json.Length && json[curr] == '"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (decimal.TryParse(sliceFallback, NumberStyles.Float, CultureInfo.InvariantCulture, out result))
+                    {
+                        index = curr + 1;
+                        return true;
+                    }
+                }
+            }
+
+            result = default;
             return false;
         }
 
@@ -690,6 +867,118 @@ namespace GenJson
                 return true;
             }
 
+            return false;
+        }
+
+        public static bool TryParseGuid(ReadOnlySpan<char> json, ref int index, out Guid result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeString(span);
+                return Guid.TryParse(s, out result);
+            }
+            return Guid.TryParse(span, out result);
+        }
+
+        public static bool TryParseDateTime(ReadOnlySpan<char> json, ref int index, out DateTime result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeString(span);
+                return DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out result);
+            }
+            return DateTime.TryParse(span, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out result);
+        }
+
+        public static bool TryParseDateTimeOffset(ReadOnlySpan<char> json, ref int index, out DateTimeOffset result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeString(span);
+                return DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out result);
+            }
+            return DateTimeOffset.TryParse(span, CultureInfo.InvariantCulture, DateTimeStyles.None, out result);
+        }
+
+        public static bool TryParseTimeSpan(ReadOnlySpan<char> json, ref int index, out TimeSpan result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeString(span);
+                return TimeSpan.TryParse(s, out result);
+            }
+            return TimeSpan.TryParse(span, out result);
+        }
+
+        public static bool TryParseVersion(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out Version? result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeString(span);
+                return Version.TryParse(s, out result);
+            }
+            return Version.TryParse(span, out result);
+        }
+
+        public static bool TryParseUri(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out Uri? result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            string s = escaped ? UnescapeString(span) : new string(span);
+            return Uri.TryCreate(s, UriKind.RelativeOrAbsolute, out result);
+        }
+
+        public static bool TryParseGuid(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out Guid? result)
+        {
+            if (TryParseGuid(json, ref index, out Guid val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public static bool TryParseDateTime(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out DateTime? result)
+        {
+            if (TryParseDateTime(json, ref index, out DateTime val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public static bool TryParseDateTimeOffset(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out DateTimeOffset? result)
+        {
+            if (TryParseDateTimeOffset(json, ref index, out DateTimeOffset val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public static bool TryParseTimeSpan(ReadOnlySpan<char> json, ref int index, [NotNullWhen(true)] out TimeSpan? result)
+        {
+            if (TryParseTimeSpan(json, ref index, out TimeSpan val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
             return false;
         }
 
@@ -884,7 +1173,24 @@ namespace GenJson
                 {
                     escaped = true;
                     if (index >= json.Length) return false;
-                    index++;
+                    c = json[index++];
+                    if (!IsValidJsonEscape(c)) return false;
+                    if (c == (byte)'u')
+                    {
+                        if (index + 4 > json.Length) return false;
+                        if (!IsHexDigit(json[index]) ||
+                            !IsHexDigit(json[index + 1]) ||
+                            !IsHexDigit(json[index + 2]) ||
+                            !IsHexDigit(json[index + 3]))
+                        {
+                            return false;
+                        }
+                        index += 4;
+                    }
+                }
+                else if (c < 0x20)
+                {
+                    return false;
                 }
             }
 
@@ -917,7 +1223,24 @@ namespace GenJson
                 {
                     escaped = true;
                     if (index >= json.Length) return false;
-                    index++;
+                    c = json[index++];
+                    if (!IsValidJsonEscape(c)) return false;
+                    if (c == (byte)'u')
+                    {
+                        if (index + 4 > json.Length) return false;
+                        if (!IsHexDigit(json[index]) ||
+                            !IsHexDigit(json[index + 1]) ||
+                            !IsHexDigit(json[index + 2]) ||
+                            !IsHexDigit(json[index + 3]))
+                        {
+                            return false;
+                        }
+                        index += 4;
+                    }
+                }
+                else if (c < 0x20)
+                {
+                    return false;
                 }
             }
 
@@ -1212,8 +1535,10 @@ namespace GenJson
 
         public static bool TryParseChar(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out char? result)
         {
+            var originalIndex = index;
             if (!TryParseString(json, ref index, out var s) || s!.Length != 1)
             {
+                index = originalIndex;
                 result = null;
                 return false;
             }
@@ -1223,8 +1548,10 @@ namespace GenJson
 
         public static bool TryParseChar(ReadOnlySpan<byte> json, ref int index, out char result)
         {
+            var originalIndex = index;
             if (!TryParseString(json, ref index, out var s) || s!.Length != 1)
             {
+                index = originalIndex;
                 result = default;
                 return false;
             }
@@ -1349,13 +1676,11 @@ namespace GenJson
 
         public static bool TryParseSByte(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out sbyte? result)
         {
-            if (Utf8Parser.TryParse(json.Slice(index), out sbyte varRes, out var bytesConsumed))
+            if (TryParseSByte(json, ref index, out sbyte val))
             {
-                index += bytesConsumed;
-                result = varRes;
+                result = val;
                 return true;
             }
-
             result = null;
             return false;
         }
@@ -1367,18 +1692,35 @@ namespace GenJson
                 index += bytesConsumed;
                 return true;
             }
+
+            if (index < json.Length && json[index] == (byte)'"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == (byte)'-') curr++;
+                while (curr < json.Length && (json[curr] >= (byte)'0' && json[curr] <= (byte)'9')) curr++;
+
+                if (curr < json.Length && json[curr] == (byte)'"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (Utf8Parser.TryParse(sliceFallback, out result, out int consumed) && consumed == sliceFallback.Length)
+                    {
+                        index = curr + 1;
+                        return true;
+                    }
+                }
+            }
+
             return false;
         }
 
         public static bool TryParseLong(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out long? result)
         {
-            if (Utf8Parser.TryParse(json.Slice(index), out long varRes, out var bytesConsumed))
+            if (TryParseLong(json, ref index, out long val))
             {
-                index += bytesConsumed;
-                result = varRes;
+                result = val;
                 return true;
             }
-
             result = null;
             return false;
         }
@@ -1390,18 +1732,35 @@ namespace GenJson
                 index += bytesConsumed;
                 return true;
             }
+
+            if (index < json.Length && json[index] == (byte)'"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == (byte)'-') curr++;
+                while (curr < json.Length && (json[curr] >= (byte)'0' && json[curr] <= (byte)'9')) curr++;
+
+                if (curr < json.Length && json[curr] == (byte)'"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (Utf8Parser.TryParse(sliceFallback, out result, out int consumed) && consumed == sliceFallback.Length)
+                    {
+                        index = curr + 1;
+                        return true;
+                    }
+                }
+            }
+
             return false;
         }
 
         public static bool TryParseULong(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out ulong? result)
         {
-            if (Utf8Parser.TryParse(json.Slice(index), out ulong varRes, out var bytesConsumed))
+            if (TryParseULong(json, ref index, out ulong val))
             {
-                index += bytesConsumed;
-                result = varRes;
+                result = val;
                 return true;
             }
-
             result = null;
             return false;
         }
@@ -1413,18 +1772,34 @@ namespace GenJson
                 index += bytesConsumed;
                 return true;
             }
+
+            if (index < json.Length && json[index] == (byte)'"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                while (curr < json.Length && (json[curr] >= (byte)'0' && json[curr] <= (byte)'9')) curr++;
+
+                if (curr < json.Length && json[curr] == (byte)'"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (Utf8Parser.TryParse(sliceFallback, out result, out int consumed) && consumed == sliceFallback.Length)
+                    {
+                        index = curr + 1;
+                        return true;
+                    }
+                }
+            }
+
             return false;
         }
 
         public static bool TryParseDouble(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out double? result)
         {
-            if (Utf8Parser.TryParse(json.Slice(index), out double varRes, out var bytesConsumed))
+            if (TryParseDouble(json, ref index, out double val))
             {
-                index += bytesConsumed;
-                result = varRes;
+                result = val;
                 return true;
             }
-
             result = null;
             return false;
         }
@@ -1436,18 +1811,59 @@ namespace GenJson
                 index += bytesConsumed;
                 return true;
             }
+
+            if (index < json.Length && json[index] == (byte)'"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == (byte)'-') curr++;
+
+                bool isNamed = false;
+                if (curr < json.Length && (json[curr] == (byte)'I' || json[curr] == (byte)'N'))
+                {
+                    isNamed = true;
+                    while (curr < json.Length && ((json[curr] >= (byte)'a' && json[curr] <= (byte)'z') || (json[curr] >= (byte)'A' && json[curr] <= (byte)'Z'))) curr++;
+                }
+                else
+                {
+                    while (curr < json.Length && ((json[curr] >= (byte)'0' && json[curr] <= (byte)'9') || json[curr] == (byte)'.' || json[curr] == (byte)'e' || json[curr] == (byte)'E' || json[curr] == (byte)'+' || json[curr] == (byte)'-')) curr++;
+                }
+
+                if (curr < json.Length && json[curr] == (byte)'"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (isNamed)
+                    {
+                        ReadOnlySpan<byte> nanBytes = new byte[] { (byte)'N', (byte)'a', (byte)'N' };
+                        ReadOnlySpan<byte> infinityBytes = new byte[] { (byte)'I', (byte)'n', (byte)'f', (byte)'i', (byte)'n', (byte)'i', (byte)'t', (byte)'y' };
+                        ReadOnlySpan<byte> plusInfinityBytes = new byte[] { (byte)'+', (byte)'I', (byte)'n', (byte)'f', (byte)'i', (byte)'n', (byte)'i', (byte)'t', (byte)'y' };
+                        ReadOnlySpan<byte> minusInfinityBytes = new byte[] { (byte)'-', (byte)'I', (byte)'n', (byte)'f', (byte)'i', (byte)'n', (byte)'i', (byte)'t', (byte)'y' };
+
+                        if (sliceFallback.SequenceEqual(nanBytes)) { result = double.NaN; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual(infinityBytes) || sliceFallback.SequenceEqual(plusInfinityBytes)) { result = double.PositiveInfinity; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual(minusInfinityBytes)) { result = double.NegativeInfinity; index = curr + 1; return true; }
+                    }
+                    else
+                    {
+                        if (Utf8Parser.TryParse(sliceFallback, out result, out int consumed) && consumed == sliceFallback.Length)
+                        {
+                            index = curr + 1;
+                            return true;
+                        }
+                    }
+                }
+            }
+
             return false;
         }
 
         public static bool TryParseFloat(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out float? result)
         {
-            if (Utf8Parser.TryParse(json.Slice(index), out float varRes, out var bytesConsumed))
+            if (TryParseFloat(json, ref index, out float val))
             {
-                index += bytesConsumed;
-                result = varRes;
+                result = val;
                 return true;
             }
-
             result = null;
             return false;
         }
@@ -1459,18 +1875,59 @@ namespace GenJson
                 index += bytesConsumed;
                 return true;
             }
+
+            if (index < json.Length && json[index] == (byte)'"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == (byte)'-') curr++;
+
+                bool isNamed = false;
+                if (curr < json.Length && (json[curr] == (byte)'I' || json[curr] == (byte)'N'))
+                {
+                    isNamed = true;
+                    while (curr < json.Length && ((json[curr] >= (byte)'a' && json[curr] <= (byte)'z') || (json[curr] >= (byte)'A' && json[curr] <= (byte)'Z'))) curr++;
+                }
+                else
+                {
+                    while (curr < json.Length && ((json[curr] >= (byte)'0' && json[curr] <= (byte)'9') || json[curr] == (byte)'.' || json[curr] == (byte)'e' || json[curr] == (byte)'E' || json[curr] == (byte)'+' || json[curr] == (byte)'-')) curr++;
+                }
+
+                if (curr < json.Length && json[curr] == (byte)'"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (isNamed)
+                    {
+                        ReadOnlySpan<byte> nanBytes = new byte[] { (byte)'N', (byte)'a', (byte)'N' };
+                        ReadOnlySpan<byte> infinityBytes = new byte[] { (byte)'I', (byte)'n', (byte)'f', (byte)'i', (byte)'n', (byte)'i', (byte)'t', (byte)'y' };
+                        ReadOnlySpan<byte> plusInfinityBytes = new byte[] { (byte)'+', (byte)'I', (byte)'n', (byte)'f', (byte)'i', (byte)'n', (byte)'i', (byte)'t', (byte)'y' };
+                        ReadOnlySpan<byte> minusInfinityBytes = new byte[] { (byte)'-', (byte)'I', (byte)'n', (byte)'f', (byte)'i', (byte)'n', (byte)'i', (byte)'t', (byte)'y' };
+
+                        if (sliceFallback.SequenceEqual(nanBytes)) { result = float.NaN; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual(infinityBytes) || sliceFallback.SequenceEqual(plusInfinityBytes)) { result = float.PositiveInfinity; index = curr + 1; return true; }
+                        if (sliceFallback.SequenceEqual(minusInfinityBytes)) { result = float.NegativeInfinity; index = curr + 1; return true; }
+                    }
+                    else
+                    {
+                        if (Utf8Parser.TryParse(sliceFallback, out result, out int consumed) && consumed == sliceFallback.Length)
+                        {
+                            index = curr + 1;
+                            return true;
+                        }
+                    }
+                }
+            }
+
             return false;
         }
 
         public static bool TryParseDecimal(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out decimal? result)
         {
-            if (Utf8Parser.TryParse(json.Slice(index), out decimal varRes, out var bytesConsumed))
+            if (TryParseDecimal(json, ref index, out decimal val))
             {
-                index += bytesConsumed;
-                result = varRes;
+                result = val;
                 return true;
             }
-
             result = null;
             return false;
         }
@@ -1482,6 +1939,25 @@ namespace GenJson
                 index += bytesConsumed;
                 return true;
             }
+
+            if (index < json.Length && json[index] == (byte)'"')
+            {
+                var valueStart = index + 1;
+                var curr = valueStart;
+                if (curr < json.Length && json[curr] == (byte)'-') curr++;
+                while (curr < json.Length && ((json[curr] >= (byte)'0' && json[curr] <= (byte)'9') || json[curr] == (byte)'.' || json[curr] == (byte)'e' || json[curr] == (byte)'E' || json[curr] == (byte)'+' || json[curr] == (byte)'-')) curr++;
+
+                if (curr < json.Length && json[curr] == (byte)'"')
+                {
+                    var sliceFallback = json.Slice(valueStart, curr - valueStart);
+                    if (Utf8Parser.TryParse(sliceFallback, out result, out int consumed) && consumed == sliceFallback.Length)
+                    {
+                        index = curr + 1;
+                        return true;
+                    }
+                }
+            }
+
             return false;
         }
 
@@ -1493,6 +1969,148 @@ namespace GenJson
                 return true;
             }
 
+            return false;
+        }
+
+        public static bool TryParseGuid(ReadOnlySpan<byte> json, ref int index, out Guid result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeStringUtf8(span);
+                return Guid.TryParse(s, out result);
+            }
+            if (Utf8Parser.TryParse(span, out result, out var bytesConsumed) && bytesConsumed == span.Length)
+            {
+                return true;
+            }
+            var str = Encoding.UTF8.GetString(span);
+            return Guid.TryParse(str, out result);
+        }
+
+        public static bool TryParseDateTime(ReadOnlySpan<byte> json, ref int index, out DateTime result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeStringUtf8(span);
+                return DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out result);
+            }
+            if (Utf8Parser.TryParse(span, out result, out var bytesConsumed, 'O') && bytesConsumed == span.Length)
+            {
+                return true;
+            }
+            var str = Encoding.UTF8.GetString(span);
+            return DateTime.TryParse(str, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out result);
+        }
+
+        public static bool TryParseDateTimeOffset(ReadOnlySpan<byte> json, ref int index, out DateTimeOffset result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeStringUtf8(span);
+                return DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out result);
+            }
+            if (Utf8Parser.TryParse(span, out result, out var bytesConsumed, 'O') && bytesConsumed == span.Length)
+            {
+                return true;
+            }
+            var str = Encoding.UTF8.GetString(span);
+            return DateTimeOffset.TryParse(str, CultureInfo.InvariantCulture, DateTimeStyles.None, out result);
+        }
+
+        public static bool TryParseTimeSpan(ReadOnlySpan<byte> json, ref int index, out TimeSpan result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeStringUtf8(span);
+                return TimeSpan.TryParse(s, out result);
+            }
+            if (Utf8Parser.TryParse(span, out result, out var bytesConsumed, 'c') && bytesConsumed == span.Length)
+            {
+                return true;
+            }
+            var str = Encoding.UTF8.GetString(span);
+            return TimeSpan.TryParse(str, out result);
+        }
+
+        public static bool TryParseVersion(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out Version? result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            if (escaped)
+            {
+                var s = UnescapeStringUtf8(span);
+                return Version.TryParse(s, out result);
+            }
+            if (span.Length <= 64)
+            {
+                Span<char> chars = stackalloc char[span.Length];
+                int written = Encoding.UTF8.GetChars(span, chars);
+                return Version.TryParse(chars.Slice(0, written), out result);
+            }
+            else
+            {
+                var str = Encoding.UTF8.GetString(span);
+                return Version.TryParse(str, out result);
+            }
+        }
+
+        public static bool TryParseUri(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out Uri? result)
+        {
+            result = default;
+            if (!TryParseStringSpan(json, ref index, out var span, out var escaped)) return false;
+            string s = escaped ? UnescapeStringUtf8(span) : Encoding.UTF8.GetString(span);
+            return Uri.TryCreate(s, UriKind.RelativeOrAbsolute, out result);
+        }
+
+        public static bool TryParseGuid(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out Guid? result)
+        {
+            if (TryParseGuid(json, ref index, out Guid val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public static bool TryParseDateTime(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out DateTime? result)
+        {
+            if (TryParseDateTime(json, ref index, out DateTime val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public static bool TryParseDateTimeOffset(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out DateTimeOffset? result)
+        {
+            if (TryParseDateTimeOffset(json, ref index, out DateTimeOffset val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
+            return false;
+        }
+
+        public static bool TryParseTimeSpan(ReadOnlySpan<byte> json, ref int index, [NotNullWhen(true)] out TimeSpan? result)
+        {
+            if (TryParseTimeSpan(json, ref index, out TimeSpan val))
+            {
+                result = val;
+                return true;
+            }
+            result = null;
             return false;
         }
 
@@ -1690,6 +2308,58 @@ namespace GenJson
         private static bool IsDelimiter(byte c)
         {
             return c == ',' || c == '}' || c == ']';
+        }
+
+        private static bool IsValidJsonEscape(char c)
+        {
+            switch (c)
+            {
+                case '"':
+                case '\\':
+                case '/':
+                case 'b':
+                case 'f':
+                case 'n':
+                case 'r':
+                case 't':
+                case 'u':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsValidJsonEscape(byte c)
+        {
+            switch (c)
+            {
+                case (byte)'"':
+                case (byte)'\\':
+                case (byte)'/':
+                case (byte)'b':
+                case (byte)'f':
+                case (byte)'n':
+                case (byte)'r':
+                case (byte)'t':
+                case (byte)'u':
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsHexDigit(char c)
+        {
+            return (c >= '0' && c <= '9') ||
+                   (c >= 'a' && c <= 'f') ||
+                   (c >= 'A' && c <= 'F');
+        }
+
+        private static bool IsHexDigit(byte c)
+        {
+            return (c >= (byte)'0' && c <= (byte)'9') ||
+                   (c >= (byte)'a' && c <= (byte)'f') ||
+                   (c >= (byte)'A' && c <= (byte)'F');
         }
     }
 }
